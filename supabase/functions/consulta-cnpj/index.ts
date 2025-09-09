@@ -96,9 +96,23 @@ async function consultarCNPJRegularize(cnpj: string, solveCaptchaApiKey: string)
     console.log('Página carregada com sucesso')
     
     // Step 2: Extract hCaptcha site key and other form data
-    const siteKeyMatch = pageHtml.match(/data-sitekey="([^"]+)"/)
+    console.log('Procurando hCaptcha site key na página...')
+    
+    // Try multiple patterns to find the hCaptcha site key
+    let siteKeyMatch = pageHtml.match(/data-sitekey="([^"]+)"/)
     if (!siteKeyMatch) {
-      throw new Error('hCaptcha site key not found')
+      siteKeyMatch = pageHtml.match(/sitekey:\s*["']([^"']+)["']/)
+    }
+    if (!siteKeyMatch) {
+      siteKeyMatch = pageHtml.match(/hcaptcha.*?sitekey.*?["']([^"']+)["']/i)
+    }
+    if (!siteKeyMatch) {
+      siteKeyMatch = pageHtml.match(/["']sitekey["']:\s*["']([^"']+)["']/)
+    }
+    
+    if (!siteKeyMatch) {
+      console.log('HTML excerpt for debugging:', pageHtml.substring(0, 2000))
+      throw new Error('hCaptcha site key not found in page HTML')
     }
     
     const siteKey = siteKeyMatch[1]
