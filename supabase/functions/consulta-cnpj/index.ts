@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import puppeteer from "https://deno.land/x/puppeteer@16.2.0/mod.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -79,43 +80,86 @@ serve(async (req) => {
 async function consultarCNPJRegularize(cnpj: string, solveCaptchaApiKey: string): Promise<boolean> {
   console.log(`Acessando site Regularize para CNPJ: ${cnpj}`)
   
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  })
+  
   try {
-    // Step 1: Load the page and get the form
-    const pageResponse = await fetch('https://www.regularize.pgfn.gov.br/cadastro', {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    const page = await browser.newPage()
+    
+    // Set user agent
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+    
+    let sitekeyFromRequest: string | null = null
+    
+    // Intercept network requests to capture sitekey
+    page.on('request', req => {
+      const url = req.url()
+      if (url.includes('hcaptcha.com') && (url.includes('getcaptcha') || url.includes('api.js'))) {
+        const urlObj = new URL(url)
+        const sk = urlObj.searchParams.get('sitekey')
+        if (sk) {
+          sitekeyFromRequest = sk
+          console.log(`Site key capturado da request: ${sk}`)
+        }
       }
     })
     
-    if (!pageResponse.ok) {
-      throw new Error(`Failed to load page: ${pageResponse.status}`)
+    // Navigate to the page
+    console.log('Navegando para a página do Regularize...')
+    await page.goto('https://www.regularize.pgfn.gov.br/cadastro', { 
+      waitUntil: 'domcontentloaded',
+      timeout: 30000 
+    })
+    
+    // Wait for hCaptcha iframe to appear
+    console.log('Aguardando carregamento do hCaptcha...')
+    await page.waitForSelector('iframe[src*="hcaptcha.com"]', { timeout: 15000 })
+    
+    // Try multiple strategies to extract sitekey
+    let siteKey: string | null = null
+    
+    // Strategy 1: Extract from div.h-captcha or element with data-sitekey
+    console.log('Tentativa 1: Extraindo sitekey do elemento data-sitekey')
+    siteKey = await page.evaluate(() => {
+      const el = document.querySelector('div.h-captcha, [data-sitekey]')
+      return el?.getAttribute('data-sitekey') || null
+    })
+    
+    // Strategy 2: Extract from hCaptcha iframe URL
+    if (!siteKey) {
+      console.log('Tentativa 2: Extraindo sitekey da URL do iframe')
+      const frames = page.frames()
+      for (const frame of frames) {
+        if (frame.url().includes('hcaptcha.com')) {
+          const url = new URL(frame.url())
+          siteKey = url.searchParams.get('sitekey')
+          if (siteKey) break
+        }
+      }
     }
     
-    const pageHtml = await pageResponse.text()
-    console.log('Página carregada com sucesso')
-    
-    // Step 2: Extract hCaptcha site key and other form data
-    console.log('Procurando hCaptcha site key na página...')
-    
-    // Try multiple patterns to find the hCaptcha site key
-    let siteKeyMatch = pageHtml.match(/data-sitekey="([^"]+)"/)
-    if (!siteKeyMatch) {
-      siteKeyMatch = pageHtml.match(/sitekey:\s*["']([^"']+)["']/)
-    }
-    if (!siteKeyMatch) {
-      siteKeyMatch = pageHtml.match(/hcaptcha.*?sitekey.*?["']([^"']+)["']/i)
-    }
-    if (!siteKeyMatch) {
-      siteKeyMatch = pageHtml.match(/["']sitekey["']:\s*["']([^"']+)["']/)
+    // Strategy 3: Use captured sitekey from network requests
+    if (!siteKey && sitekeyFromRequest) {
+      console.log('Tentativa 3: Usando sitekey capturado das requests')
+      siteKey = sitekeyFromRequest
     }
     
-    if (!siteKeyMatch) {
-      console.log('HTML excerpt for debugging:', pageHtml.substring(0, 2000))
-      throw new Error('hCaptcha site key not found in page HTML')
+    // Strategy 4: Extract from script content
+    if (!siteKey) {
+      console.log('Tentativa 4: Extraindo sitekey do código JavaScript')
+      const scripts = await page.$$eval('script', els => 
+        els.map(e => e.textContent || '').join('\n')
+      )
+      const match = scripts.match(/hcaptcha\.render\([^)]*sitekey['"]?\s*:\s*['"]([^'"]+)['"]/i)
+      siteKey = match?.[1] || null
     }
     
-    const siteKey = siteKeyMatch[1]
+    if (!siteKey) {
+      throw new Error('hCaptcha site key não encontrado usando nenhuma estratégia')
+    }
+    
     console.log(`hCaptcha site key encontrado: ${siteKey}`)
     
     // Step 3: Solve hCaptcha using SolveCaptcha API
@@ -123,59 +167,55 @@ async function consultarCNPJRegularize(cnpj: string, solveCaptchaApiKey: string)
     const captchaToken = await solvehCaptcha(siteKey, 'https://www.regularize.pgfn.gov.br/cadastro', solveCaptchaApiKey)
     console.log('hCaptcha resolvido com sucesso')
     
-    // Step 4: Submit the form with CNPJ and captcha token
-    const formData = new FormData()
-    formData.append('cpfCnpj', cnpj)
-    formData.append('h-captcha-response', captchaToken)
-    formData.append('g-recaptcha-response', captchaToken)
+    // Step 4: Submit the form with CNPJ and captcha token using Puppeteer
+    console.log('Preenchendo formulário...')
     
-    console.log('Enviando formulário...')
-    const submitResponse = await fetch('https://www.regularize.pgfn.gov.br/cadastro', {
-      method: 'POST',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': 'https://www.regularize.pgfn.gov.br/cadastro'
-      },
-      body: formData,
-      redirect: 'manual'
-    })
+    // Fill the CNPJ field
+    await page.type('input[name="cpfCnpj"]', cnpj)
     
-    console.log(`Response status: ${submitResponse.status}`)
-    console.log(`Response headers:`, Object.fromEntries(submitResponse.headers.entries()))
+    // Inject the captcha token
+    await page.evaluate((token) => {
+      const hCaptchaResponse = document.querySelector('textarea[name="h-captcha-response"]') as HTMLTextAreaElement
+      const gRecaptchaResponse = document.querySelector('textarea[name="g-recaptcha-response"]') as HTMLTextAreaElement
+      
+      if (hCaptchaResponse) hCaptchaResponse.value = token
+      if (gRecaptchaResponse) gRecaptchaResponse.value = token
+    }, captchaToken)
     
-    // Step 5: Analyze the response to determine if CNPJ has registration
-    const finalUrl = submitResponse.headers.get('location') || submitResponse.url
-    console.log(`Final URL: ${finalUrl}`)
+    console.log('Submetendo formulário...')
     
-    // If redirected back to main page or shows popup, CNPJ already has registration
-    // If redirected to form page, CNPJ doesn't have registration
-    if (finalUrl.includes('regularize.pgfn.gov.br') && !finalUrl.includes('cadastro')) {
-      // Redirected to main page = already registered
+    // Submit the form and wait for navigation
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }),
+      page.click('button[type="submit"], input[type="submit"]')
+    ])
+    
+    const currentUrl = page.url()
+    console.log(`URL após submissão: ${currentUrl}`)
+    
+    // Get page content to analyze
+    const pageContent = await page.content()
+    
+    // Analyze the response to determine if CNPJ has registration
+    if (currentUrl.includes('regularize.pgfn.gov.br') && !currentUrl.includes('cadastro')) {
+      // Redirected away from cadastro page = already registered
       return true
-    } else if (finalUrl.includes('cadastro') || submitResponse.status === 200) {
-      // Stayed on cadastro page or form page = not registered
-      const responseText = await submitResponse.text()
-      
-      // Check for specific indicators in the response
-      if (responseText.includes('já cadastrado') || responseText.includes('CNPJ informado já está cadastrado')) {
-        return true
-      }
-      
-      // If form fields are present, it means the CNPJ is available for registration
-      if (responseText.includes('nome') && responseText.includes('email')) {
-        return false
-      }
-      
-      // Default to not registered if we can access the form
+    } else if (pageContent.includes('já cadastrado') || pageContent.includes('CNPJ informado já está cadastrado')) {
+      // Content indicates already registered
+      return true
+    } else if (pageContent.includes('nome') && pageContent.includes('email')) {
+      // Form fields present = available for registration
       return false
     }
     
-    // Default to not registered
+    // Default to not registered if we can access the form
     return false
     
   } catch (error) {
     console.error(`Error consulting CNPJ ${cnpj}:`, error)
     throw error
+  } finally {
+    await browser.close()
   }
 }
 
