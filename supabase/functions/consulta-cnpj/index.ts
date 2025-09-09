@@ -97,7 +97,64 @@ serve(async (req) => {
       }
     )
   }
-})
+}
+
+async function checkCNPJRegistration(cnpj: string): Promise<boolean> {
+  const formattedCNPJ = formatCNPJ(cnpj)
+  
+  try {
+    console.log(`Consultando CNPJ ${formattedCNPJ} no Regularize`)
+    
+    // Make request to Regularize registration endpoint
+    const response = await fetch('https://www.regularize.pgfn.gov.br/cadastro', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'pt-BR,pt;q=0.8,en;q=0.6',
+        'Referer': 'https://www.regularize.pgfn.gov.br/'
+      },
+      body: `cnpj=${encodeURIComponent(formattedCNPJ)}&tipoPessoa=J`
+    })
+
+    const responseText = await response.text()
+    console.log(`Response status: ${response.status}`)
+    
+    // Check for indicators that CNPJ is already registered
+    const alreadyRegisteredIndicators = [
+      'já está cadastrado',
+      'efetue login com senha',
+      'CNPJ informado já está cadastrado',
+      'already registered',
+      'login required'
+    ]
+    
+    const isRegistered = alreadyRegisteredIndicators.some(indicator => 
+      responseText.toLowerCase().includes(indicator.toLowerCase())
+    )
+    
+    console.log(`CNPJ ${formattedCNPJ} registration status: ${isRegistered ? 'REGISTERED' : 'NOT_REGISTERED'}`)
+    
+    return isRegistered
+    
+  } catch (error) {
+    console.error(`Erro ao consultar CNPJ ${formattedCNPJ}:`, error)
+    throw new Error(`Falha na consulta: ${error.message}`)
+  }
+}
+
+function formatCNPJ(cnpj: string): string {
+  // Remove all non-digits
+  const numbers = cnpj.replace(/\D/g, '')
+  
+  // Format as XX.XXX.XXX/XXXX-XX
+  if (numbers.length === 14) {
+    return numbers.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5')
+  }
+  
+  return cnpj
+}
 
 async function processJob(jobId: string, cnpjs: string[]) {
   console.log(`Iniciando processamento do job ${jobId}`)
@@ -116,8 +173,8 @@ async function processJob(jobId: string, cnpjs: string[]) {
       console.log(`Processando CNPJ: ${cnpj}`)
       
       try {
-        // Simulate CNPJ consultation (replace with actual logic when worker is implemented)
-        const hasRegistration = Math.random() > 0.7 // 30% chance of being already registered
+        // Real CNPJ consultation to Regularize
+        const hasRegistration = await checkCNPJRegistration(cnpj)
         
         results.push({
           cnpj,
