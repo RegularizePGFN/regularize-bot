@@ -113,162 +113,118 @@ async function checkCNPJRegistration(cnpj: string): Promise<CNPJCheckResult> {
   const timestamp = new Date().toISOString()
   
   try {
-    console.log(`Consultando CNPJ ${formattedCNPJ} no Regularize`)
+    console.log(`Consultando CNPJ ${formattedCNPJ} no Regularize usando fluxo simulado`)
     
-    // Step 1: Follow the exact flow described - start at the base URL
-    let currentUrl = 'https://www.regularize.pgfn.gov.br/cadastro'
-    let finalUrl = currentUrl
-    let method = 'url_analysis'
-    let evidence = ''
-    let responseText = '' // Declare at function scope
+    // Simulate Playwright flow
+    return await simulatePlaywrightFlow(cnpj, formattedCNPJ, timestamp)
     
-    // Make the POST request to submit CNPJ
-    const response = await fetch('https://www.regularize.pgfn.gov.br/cadastro', {
+  } catch (error) {
+    console.error(`Erro ao consultar CNPJ ${formattedCNPJ}:`, error)
+    return {
+      cnpj: formattedCNPJ,
+      hasRegistration: false,
+      finalUrl: 'error',
+      method: 'error',
+      evidence: `Error: ${error.message}`,
+      timestamp
+    }
+  }
+}
+
+async function simulatePlaywrightFlow(cnpj: string, formattedCNPJ: string, timestamp: string): Promise<CNPJCheckResult> {
+  console.log(`Simulando fluxo Playwright para CNPJ ${formattedCNPJ}`)
+  
+  try {
+    // Step 1: Get the initial page to extract any necessary tokens
+    const initialResponse = await fetch('https://www.regularize.pgfn.gov.br/cadastro', {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+      }
+    })
+    
+    const pageContent = await initialResponse.text()
+    console.log(`Página inicial carregada, tamanho: ${pageContent.length} chars`)
+    
+    // Extract potential CSRF tokens or session data
+    const csrfToken = extractCSRFToken(pageContent)
+    const cookies = extractCookies(initialResponse.headers)
+    
+    // Step 2: Submit CNPJ form (simulating button click)
+    const submitResponse = await fetch('https://www.regularize.pgfn.gov.br/cadastro', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
         'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
-        'Referer': 'https://www.regularize.pgfn.gov.br/',
+        'Referer': 'https://www.regularize.pgfn.gov.br/cadastro',
         'Origin': 'https://www.regularize.pgfn.gov.br',
         'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache'
+        'Pragma': 'no-cache',
+        'Cookie': cookies
       },
-      body: `cnpj=${encodeURIComponent(formattedCNPJ)}&tipoPessoa=J`,
-      redirect: 'manual' // Don't follow redirects automatically
+      body: buildFormData(cnpj, csrfToken),
+      redirect: 'manual'
     })
-
-    console.log(`Response status: ${response.status}`)
     
-    // Check for redirects
-    if (response.status >= 300 && response.status < 400) {
-      const location = response.headers.get('location')
+    console.log(`Submit response status: ${submitResponse.status}`)
+    
+    // Step 3: Handle response and redirects
+    let finalUrl = ''
+    let method = 'form_submission'
+    let evidence = ''
+    
+    if (submitResponse.status >= 300 && submitResponse.status < 400) {
+      // Redirect detected
+      const location = submitResponse.headers.get('location')
       if (location) {
         finalUrl = location.startsWith('http') ? location : `https://www.regularize.pgfn.gov.br${location}`
-        console.log(`Redirect detected to: ${finalUrl}`)
+        console.log(`Redirect detectado para: ${finalUrl}`)
         method = 'redirect_analysis'
-        evidence = `HTTP ${response.status} redirect to ${finalUrl}`
+        evidence = `HTTP ${submitResponse.status} redirect to ${finalUrl}`
       }
-    } else {
-      // No redirect, analyze the response content and URL
-      try {
-        responseText = await response.text()
-      } catch (error) {
-        console.log('Error reading response body:', error.message)
-        responseText = ''
-      }
+    } else if (submitResponse.status === 200) {
+      // Page returned normally, check content
+      const responseContent = await submitResponse.text()
+      finalUrl = submitResponse.url || 'https://www.regularize.pgfn.gov.br/cadastro'
       
-      finalUrl = response.url || currentUrl
-      
-      console.log(`Final URL: ${finalUrl}`)
-      console.log(`Response preview: ${responseText.substring(0, 500)}...`)
-      
-      // Look for JavaScript redirects in the content
-      const jsRedirectMatch = responseText.match(/location\.href\s*=\s*["']([^"']+)["']/i) ||
-                             responseText.match(/window\.location\s*=\s*["']([^"']+)["']/i) ||
-                             responseText.match(/document\.location\s*=\s*["']([^"']+)["']/i)
-      
-      if (jsRedirectMatch) {
-        const jsRedirectUrl = jsRedirectMatch[1]
-        finalUrl = jsRedirectUrl.startsWith('http') ? jsRedirectUrl : `https://www.regularize.pgfn.gov.br${jsRedirectUrl}`
-        console.log(`JavaScript redirect detected to: ${finalUrl}`)
-        method = 'js_redirect_analysis'
-        evidence = `JavaScript redirect to ${finalUrl}`
-      }
-      
-      // Content analysis as fallback
-      if (!jsRedirectMatch) {
-        method = 'content_analysis'
-        evidence = `Content analysis of ${responseText.length} chars`
-      }
-    }
-    
-    // Determine registration status based on final URL
-    let hasRegistration = false
-    
-    // Rule: If redirects back to base URL (https://www.regularize.pgfn.gov.br), CNPJ is already registered
-    if (finalUrl === 'https://www.regularize.pgfn.gov.br' || 
-        finalUrl === 'https://www.regularize.pgfn.gov.br/' ||
-        finalUrl.includes('/login') ||
-        finalUrl.includes('/dashboard') ||
-        finalUrl.includes('/home')) {
-      hasRegistration = true
-      console.log(`CNPJ ${formattedCNPJ}: JÁ CADASTRADO (redirected to base URL)`)
-    }
-    // Rule: If goes to /cadastro/cnpj, CNPJ is available for registration
-    else if (finalUrl.includes('/cadastro/cnpj') || 
-             finalUrl.includes('/cadastro') && finalUrl !== 'https://www.regularize.pgfn.gov.br/cadastro') {
-      hasRegistration = false
-      console.log(`CNPJ ${formattedCNPJ}: DISPONÍVEL (redirected to registration form)`)
-    }
-    // Fallback: content analysis
-    else {
-      // Get the final page content for analysis
-      let contentToAnalyze = ''
-      try {
-        if (response.status < 300 || response.status >= 400) {
-          // Use the already read responseText if available
-          contentToAnalyze = responseText || ''
+      // Check for hCaptcha
+      if (responseContent.includes('hcaptcha.com') || responseContent.includes('h-captcha')) {
+        console.log('hCaptcha detectado na resposta')
+        const captchaResult = await handleHCaptcha(responseContent, finalUrl)
+        if (captchaResult.success) {
+          // Retry submission with captcha token
+          const retryResult = await retryWithCaptcha(cnpj, csrfToken, cookies, captchaResult.token!)
+          finalUrl = retryResult.finalUrl
+          method = 'captcha_solved_redirect'
+          evidence = `hCaptcha solved, redirected to ${finalUrl}`
         } else {
-          // Fetch the redirected page
-          const finalResponse = await fetch(finalUrl)
-          contentToAnalyze = await finalResponse.text()
+          method = 'captcha_failed'
+          evidence = `hCaptcha resolution failed: ${captchaResult.error}`
         }
-      } catch (error) {
-        console.log('Error getting content for analysis:', error.message)
-        contentToAnalyze = responseText || ''
-      }
-      
-      const contentLower = contentToAnalyze.toLowerCase()
-      
-      // Look for registration form fields (indicates CNPJ is available)
-      const registrationFormIndicators = [
-        'cpf do responsável',
-        'nome da mãe',
-        'data de nascimento',
-        'confirmar senha',
-        'frase de segurança',
-        'input[name="cpf"]',
-        'input[name="dataNascimento"]',
-        'input[name="email"]'
-      ]
-      
-      // Look for login/already registered indicators
-      const alreadyRegisteredIndicators = [
-        'já está cadastrado',
-        'efetue login',
-        'digite sua senha',
-        'esqueceu a senha',
-        'entrar no sistema',
-        'login com gov.br'
-      ]
-      
-      const hasRegistrationForm = registrationFormIndicators.some(indicator => 
-        contentLower.includes(indicator.toLowerCase())
-      )
-      
-      const hasLoginForm = alreadyRegisteredIndicators.some(indicator => 
-        contentLower.includes(indicator.toLowerCase())
-      )
-      
-      if (hasLoginForm && !hasRegistrationForm) {
-        hasRegistration = true
-        method = 'content_analysis_login'
-        evidence = `Login form detected in content`
-      } else if (hasRegistrationForm && !hasLoginForm) {
-        hasRegistration = false
-        method = 'content_analysis_registration'
-        evidence = `Registration form detected in content`
       } else {
-        // Default to available if uncertain
-        hasRegistration = false
-        method = 'content_analysis_uncertain'
-        evidence = `Uncertain result, defaulting to available`
+        // Analyze content for form indicators
+        method = 'content_analysis'
+        evidence = `Content analysis of ${responseContent.length} chars`
+        
+        // Check for registration form indicators
+        if (responseContent.includes('cpf') || responseContent.includes('nascimento') || responseContent.includes('email')) {
+          finalUrl = 'https://www.regularize.pgfn.gov.br/cadastro/cnpj'
+        } else if (responseContent.includes('login') || responseContent.includes('senha')) {
+          finalUrl = 'https://www.regularize.pgfn.gov.br'
+        }
       }
-      
-      console.log(`CNPJ ${formattedCNPJ}: ${hasRegistration ? 'JÁ CADASTRADO' : 'DISPONÍVEL'} (content analysis)`)
     }
+    
+    // Step 4: Determine registration status based on final URL
+    const hasRegistration = determineRegistrationStatus(finalUrl)
+    
+    console.log(`CNPJ ${formattedCNPJ}: ${hasRegistration ? 'JÁ CADASTRADO' : 'DISPONÍVEL'} (${method})`)
     
     return {
       cnpj: formattedCNPJ,
@@ -280,16 +236,152 @@ async function checkCNPJRegistration(cnpj: string): Promise<CNPJCheckResult> {
     }
     
   } catch (error) {
-    console.error(`Erro ao consultar CNPJ ${formattedCNPJ}:`, error)
+    console.error(`Erro no fluxo simulado para CNPJ ${formattedCNPJ}:`, error)
     return {
       cnpj: formattedCNPJ,
-      hasRegistration: false, // Default to available on error
+      hasRegistration: false,
       finalUrl: 'error',
       method: 'error',
-      evidence: `Error: ${error.message}`,
+      evidence: `Simulation error: ${error.message}`,
       timestamp
     }
   }
+}
+
+function extractCSRFToken(html: string): string {
+  // Try to extract CSRF token from various common patterns
+  const patterns = [
+    /<meta name="_token" content="([^"]+)"/i,
+    /<input type="hidden" name="_token" value="([^"]+)"/i,
+    /<meta name="csrf-token" content="([^"]+)"/i,
+    /name="__RequestVerificationToken" value="([^"]+)"/i
+  ]
+  
+  for (const pattern of patterns) {
+    const match = html.match(pattern)
+    if (match) return match[1]
+  }
+  
+  return ''
+}
+
+function extractCookies(headers: Headers): string {
+  const cookies: string[] = []
+  for (const [name, value] of headers.entries()) {
+    if (name.toLowerCase() === 'set-cookie') {
+      cookies.push(value.split(';')[0])
+    }
+  }
+  return cookies.join('; ')
+}
+
+function buildFormData(cnpj: string, csrfToken: string): string {
+  const params = new URLSearchParams()
+  params.append('cnpj', cnpj.replace(/\D/g, '')) // Only numbers
+  params.append('tipoPessoa', 'J')
+  if (csrfToken) params.append('_token', csrfToken)
+  return params.toString()
+}
+
+async function handleHCaptcha(content: string, pageUrl: string): Promise<{success: boolean, token?: string, error?: string}> {
+  try {
+    const solveCaptchaApiKey = Deno.env.get('SOLVECAPTCHA_API_KEY')
+    if (!solveCaptchaApiKey) {
+      return { success: false, error: 'SolveCaptcha API key not configured' }
+    }
+    
+    // Extract hCaptcha sitekey
+    const sitekeyMatch = content.match(/data-sitekey=["']([^"']+)["']/i) || 
+                        content.match(/sitekey["']?\s*:\s*["']([^"']+)["']/i)
+    
+    if (!sitekeyMatch) {
+      return { success: false, error: 'hCaptcha sitekey not found' }
+    }
+    
+    const sitekey = sitekeyMatch[1]
+    console.log(`hCaptcha sitekey detectado: ${sitekey}`)
+    
+    // Call SolveCaptcha API
+    const captchaResponse = await fetch('https://api.solvecaptcha.com/solve', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${solveCaptchaApiKey}`
+      },
+      body: JSON.stringify({
+        type: 'hcaptcha',
+        sitekey: sitekey,
+        pageurl: pageUrl
+      })
+    })
+    
+    const captchaResult = await captchaResponse.json()
+    
+    if (captchaResult.success && captchaResult.token) {
+      console.log('hCaptcha resolvido com sucesso')
+      return { success: true, token: captchaResult.token }
+    } else {
+      return { success: false, error: captchaResult.error || 'Captcha resolution failed' }
+    }
+    
+  } catch (error) {
+    return { success: false, error: `Captcha handling error: ${error.message}` }
+  }
+}
+
+async function retryWithCaptcha(cnpj: string, csrfToken: string, cookies: string, captchaToken: string): Promise<{finalUrl: string}> {
+  try {
+    const params = new URLSearchParams()
+    params.append('cnpj', cnpj.replace(/\D/g, ''))
+    params.append('tipoPessoa', 'J')
+    params.append('h-captcha-response', captchaToken)
+    if (csrfToken) params.append('_token', csrfToken)
+    
+    const response = await fetch('https://www.regularize.pgfn.gov.br/cadastro', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Cookie': cookies,
+        'Referer': 'https://www.regularize.pgfn.gov.br/cadastro',
+        'Origin': 'https://www.regularize.pgfn.gov.br'
+      },
+      body: params.toString(),
+      redirect: 'manual'
+    })
+    
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location')
+      if (location) {
+        return { finalUrl: location.startsWith('http') ? location : `https://www.regularize.pgfn.gov.br${location}` }
+      }
+    }
+    
+    return { finalUrl: response.url || 'https://www.regularize.pgfn.gov.br/cadastro' }
+    
+  } catch (error) {
+    console.error('Erro no retry com captcha:', error)
+    return { finalUrl: 'error' }
+  }
+}
+
+function determineRegistrationStatus(finalUrl: string): boolean {
+  // Rule: If redirects back to base URL, CNPJ is already registered
+  if (finalUrl === 'https://www.regularize.pgfn.gov.br' || 
+      finalUrl === 'https://www.regularize.pgfn.gov.br/' ||
+      finalUrl.includes('/login') ||
+      finalUrl.includes('/dashboard') ||
+      finalUrl.includes('/home')) {
+    return true // JÁ CADASTRADO
+  }
+  
+  // Rule: If goes to /cadastro/cnpj, CNPJ is available for registration
+  if (finalUrl.includes('/cadastro/cnpj')) {
+    return false // DISPONÍVEL
+  }
+  
+  // Default to available if uncertain
+  return false
 }
 
 function formatCNPJ(cnpj: string): string {
