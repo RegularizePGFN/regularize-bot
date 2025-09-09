@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -6,197 +7,208 @@ import {
   Clock, 
   CheckCircle2, 
   AlertCircle, 
-  FileText, 
-  Download, 
-  Eye,
+  Loader2, 
+  Download,
   Building2,
-  User
+  User,
+  Mail,
+  Timer,
+  RefreshCw
 } from "lucide-react";
-import { format } from "date-fns";
+import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
-
-export interface Job {
-  id: string;
-  cnpj: string;
-  responsavelNome: string;
-  email: string;
-  status: "pending" | "processing" | "completed" | "failed";
-  etapaAtual?: string;
-  progresso: number;
-  tempoInicio: Date;
-  tempoFim?: Date;
-  tempoEstimado?: number;
-  comprovante?: string;
-  error?: string;
-}
+import { supabase } from "@/integrations/supabase/client";
+import { Cadastro } from "@/lib/mockData";
 
 interface JobsListProps {
-  jobs: Job[];
-  onViewDetails: (jobId: string) => void;
-  onDownloadComprovante: (jobId: string) => void;
+  onJobUpdate?: () => void;
 }
 
-const statusConfig = {
-  pending: {
-    label: "Aguardando",
-    color: "secondary",
-    icon: Clock,
-    bgColor: "bg-muted/20",
-  },
-  processing: {
-    label: "Processando",
-    color: "default",
-    icon: Clock,
-    bgColor: "bg-primary/10",
-  },
-  completed: {
-    label: "Concluído",
-    color: "default",
-    icon: CheckCircle2,
-    bgColor: "bg-success/10",
-  },
-  failed: {
-    label: "Falhou",
-    color: "destructive",
-    icon: AlertCircle,
-    bgColor: "bg-destructive/10",
-  },
-} as const;
+export function JobsList({ onJobUpdate }: JobsListProps) {
+  const [jobs, setJobs] = useState<Cadastro[]>([]);
+  const [loading, setLoading] = useState(true);
 
-export function JobsList({ jobs, onViewDetails, onDownloadComprovante }: JobsListProps) {
-  const formatTempo = (inicio: Date, fim?: Date) => {
-    if (fim) {
-      const duracao = fim.getTime() - inicio.getTime();
-      const minutos = Math.floor(duracao / 60000);
-      const segundos = Math.floor((duracao % 60000) / 1000);
-      return `${minutos}min ${segundos}s`;
+  const fetchJobs = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('cadastros')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setJobs((data || []) as Cadastro[]);
+    } catch (error) {
+      console.error('Error fetching jobs:', error);
+    } finally {
+      setLoading(false);
     }
-    return format(inicio, "HH:mm", { locale: ptBR });
+  };
+
+  useEffect(() => {
+    fetchJobs();
+    
+    // Set up real-time subscription
+    const channel = supabase
+      .channel('cadastros-changes')
+      .on('postgres_changes', 
+        { event: '*', schema: 'public', table: 'cadastros' },
+        () => {
+          fetchJobs();
+          onJobUpdate?.();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [onJobUpdate]);
+
+  if (loading) {
+    return (
+      <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+        <CardContent className="p-6">
+          <div className="flex items-center justify-center space-x-2">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            <span>Carregando cadastros...</span>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const getStatusIcon = (status: Cadastro["status"]) => {
+    switch (status) {
+      case "pending": return Clock;
+      case "processing": return Loader2;
+      case "completed": return CheckCircle2;
+      case "failed": return AlertCircle;
+      default: return Clock;
+    }
+  };
+
+  const getStatusColor = (status: Cadastro["status"]) => {
+    switch (status) {
+      case "pending": return "secondary";
+      case "processing": return "default";
+      case "completed": return "default";
+      case "failed": return "destructive";
+      default: return "secondary";
+    }
+  };
+
+  const getStatusText = (status: Cadastro["status"]) => {
+    switch (status) {
+      case "pending": return "Aguardando";
+      case "processing": return "Processando";
+      case "completed": return "Concluído";
+      case "failed": return "Falhou";
+      default: return "Desconhecido";
+    }
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-semibold">Jobs de Cadastro</h2>
-        <Badge variant="outline" className="text-muted-foreground">
-          {jobs.length} {jobs.length === 1 ? "job" : "jobs"}
-        </Badge>
-      </div>
+    <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
+        <CardTitle className="text-xl">Cadastros Recentes</CardTitle>
+        <div className="flex items-center space-x-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={fetchJobs}
+            className="h-8"
+          >
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Atualizar
+          </Button>
+          <Badge variant="outline" className="bg-background/50">
+            {jobs.length} cadastros
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">{
+        jobs.length === 0 ? (
+          <div className="text-center py-8">
+            <p className="text-muted-foreground">Nenhum cadastro encontrado</p>
+          </div>
+        ) : (
+          jobs.map((job) => {
+            const StatusIcon = getStatusIcon(job.status);
+            const statusColor = getStatusColor(job.status);
+            const statusText = getStatusText(job.status);
 
-      {jobs.length === 0 ? (
-        <Card className="text-center py-12">
-          <CardContent>
-            <FileText className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
-            <h3 className="text-lg font-medium mb-2">Nenhum job cadastrado</h3>
-            <p className="text-muted-foreground">
-              Crie um novo cadastro para começar
-            </p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-4">
-          {jobs.map((job) => {
-            const config = statusConfig[job.status];
-            const StatusIcon = config.icon;
-            
             return (
-              <Card 
-                key={job.id} 
-                className={`border-border/50 ${config.bgColor} backdrop-blur-sm hover:bg-opacity-80 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg`}
-              >
-                <CardHeader className="pb-3">
-                  <div className="flex items-start justify-between">
-                    <div className="space-y-1 flex-1">
-                      <CardTitle className="text-lg flex items-center gap-2">
-                        <Building2 className="h-4 w-4 text-primary" />
-                        {job.cnpj}
-                      </CardTitle>
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <User className="h-3 w-3" />
-                        {job.responsavelNome} • {job.email}
-                      </div>
-                    </div>
-                    
-                    <div className="flex items-center gap-2">
-                      <Badge variant={config.color} className="flex items-center gap-1">
-                        <StatusIcon className="h-3 w-3" />
-                        {config.label}
-                      </Badge>
-                      
-                      <div className="text-xs text-muted-foreground text-right">
-                        <div>{formatTempo(job.tempoInicio, job.tempoFim)}</div>
-                        <div>{format(job.tempoInicio, "dd/MM HH:mm", { locale: ptBR })}</div>
-                      </div>
+              <Card key={job.id} className="border-border/30 bg-card/30 hover:bg-card/50 transition-colors">
+                <CardContent className="p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Badge variant={statusColor} className="flex items-center gap-1">
+                      <StatusIcon className={`h-3 w-3 ${job.status === 'processing' ? 'animate-spin' : ''}`} />
+                      {statusText}
+                    </Badge>
+                    <div className="text-sm text-muted-foreground">
+                      {job.progresso}%
                     </div>
                   </div>
-                </CardHeader>
 
-                <CardContent className="space-y-4">
-                  {/* Progress Bar */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                    <div className="flex items-center space-x-3">
+                      <Building2 className="h-4 w-4 text-muted-foreground" />
+                      <span className="font-mono text-sm">{job.cnpj}</span>
+                    </div>
+                    
+                    <div className="flex items-center space-x-3">
+                      <User className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm">{job.cpf}</span>
+                    </div>
+                    
+                    <div className="flex items-center space-x-3">
+                      <Mail className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm">{job.email}</span>
+                    </div>
+                  </div>
+
                   {job.status === "processing" && (
                     <div className="space-y-2">
-                      <div className="flex justify-between text-sm">
-                        <span className="text-muted-foreground">{job.etapaAtual}</span>
-                        <span className="font-medium">{job.progresso}%</span>
-                      </div>
                       <Progress value={job.progresso} className="h-2" />
-                      {job.tempoEstimado && (
-                        <div className="text-xs text-muted-foreground">
-                          Tempo estimado: {job.tempoEstimado} minutos
-                        </div>
-                      )}
+                      <p className="text-sm text-muted-foreground">{job.etapa_atual}</p>
                     </div>
                   )}
 
-                  {/* Error Message */}
-                  {job.status === "failed" && job.error && (
-                    <div className="p-3 rounded-2xl bg-destructive/10 border border-destructive/20">
-                      <div className="flex items-center gap-2 text-sm text-destructive mb-1">
-                        <AlertCircle className="h-4 w-4" />
-                        <span className="font-medium">Erro no processamento</span>
-                      </div>
-                      <p className="text-xs text-muted-foreground">{job.error}</p>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-3">
+                      <Timer className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm">
+                        Iniciado {formatDistanceToNow(new Date(job.tempo_inicio), { 
+                          addSuffix: true, 
+                          locale: ptBR 
+                        })}
+                      </span>
                     </div>
-                  )}
-
-                  {/* Actions */}
-                  <div className="flex items-center gap-2 pt-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => onViewDetails(job.id)}
-                      className="rounded-2xl"
-                    >
-                      <Eye className="h-3 w-3 mr-1" />
-                      Detalhes
-                    </Button>
-
-                    {job.status === "completed" && job.comprovante && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => onDownloadComprovante(job.id)}
-                        className="rounded-2xl text-success hover:text-success"
+                    
+                    {job.status === "completed" && job.comprovante_url && (
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        className="rounded-2xl"
+                        onClick={() => window.open(job.comprovante_url, '_blank')}
                       >
-                        <Download className="h-3 w-3 mr-1" />
+                        <Download className="h-4 w-4 mr-2" />
                         Comprovante
                       </Button>
                     )}
-
-                    <div className="flex-1" />
-
-                    {job.status === "completed" && (
-                      <Badge className="bg-success/10 text-success border-success/20">
-                        Sucesso
-                      </Badge>
-                    )}
                   </div>
+
+                  {job.status === "failed" && job.error_message && (
+                    <div className="bg-destructive/10 border border-destructive/20 rounded-xl p-3">
+                      <p className="text-sm text-destructive">{job.error_message}</p>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             );
-          })}
-        </div>
-      )}
-    </div>
+          })
+        )
+      }</CardContent>
+    </Card>
   );
 }

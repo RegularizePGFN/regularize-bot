@@ -1,49 +1,78 @@
-import { useState } from "react";
-import { Header } from "@/components/layout/Header";
+import { useEffect, useState } from "react";
 import { DashboardMetrics } from "@/components/dashboard/DashboardMetrics";
-import { CadastroWizard, CadastroData } from "@/components/wizard/CadastroWizard";
+import { CadastroWizard } from "@/components/wizard/CadastroWizard";
 import { JobsList } from "@/components/jobs/JobsList";
 import { CSVUpload } from "@/components/upload/CSVUpload";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Metrics } from "@/lib/mockData";
+import { useToast } from "@/hooks/use-toast";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { mockMetrics, mockJobs } from "@/lib/mockData";
-import { Plus, FileSpreadsheet, List, Settings } from "lucide-react";
-import { toast } from "@/hooks/use-toast";
+import { FileUp, UserPlus } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
 
-export function Dashboard() {
-  const [activeTab, setActiveTab] = useState("novo");
+export default function Dashboard() {
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [jobs, setJobs] = useState(mockJobs);
+  const [metrics, setMetrics] = useState<Metrics>({
+    cadastrosHoje: 0,
+    taxaSucesso: 0,
+    tempoMedio: 0
+  });
+  const { toast } = useToast();
 
-  const handleSubmitCadastro = async (data: CadastroData) => {
+  const fetchMetrics = async () => {
+    try {
+      // Calculate metrics from database
+      await supabase.rpc('calculate_daily_metrics');
+      
+      const { data, error } = await supabase
+        .from('metrics')
+        .select('*')
+        .eq('date', new Date().toISOString().split('T')[0])
+        .single();
+
+      if (error && error.code !== 'PGRST116') {
+        throw error;
+      }
+
+      if (data) {
+        setMetrics({
+          cadastrosHoje: data.cadastros_hoje,
+          taxaSucesso: data.taxa_sucesso,
+          tempoMedio: data.tempo_medio
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching metrics:', error);
+    }
+  };
+
+  useEffect(() => {
+    fetchMetrics();
+  }, []);
+
+  const handleCadastroSubmit = async (data: any) => {
     setIsSubmitting(true);
     
-    // Simulate API call
     try {
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      const newJob = {
-        id: `job-${Date.now()}`,
-        cnpj: data.cnpj,
-        responsavelNome: data.cpf, // Using CPF as name placeholder
-        email: data.email,
-        status: "pending" as const,
-        progresso: 0,
-        tempoInicio: new Date(),
-      };
-      
-      setJobs(prev => [newJob, ...prev]);
-      setActiveTab("jobs");
+      const response = await supabase.functions.invoke('process-cadastro', {
+        body: { cadastroData: data }
+      });
+
+      if (response.error) throw response.error;
       
       toast({
-        title: "Cadastro Iniciado!",
-        description: `Job criado para ${data.cnpj}. Acompanhe o progresso na aba Jobs.`,
+        title: "Cadastro Iniciado",
+        description: `Cadastro iniciado com sucesso. ID: ${response.data.jobId}`,
       });
+      
+      // Refresh metrics after new job
+      await fetchMetrics();
+      
     } catch (error) {
+      console.error('Error submitting cadastro:', error);
       toast({
         title: "Erro",
-        description: "Falha ao criar o job. Tente novamente.",
+        description: "Ocorreu um erro ao processar o cadastro. Tente novamente.",
         variant: "destructive",
       });
     } finally {
@@ -51,118 +80,82 @@ export function Dashboard() {
     }
   };
 
-  const handleCSVData = async (csvData: any[]) => {
-    if (csvData.length === 0) return;
-
-    toast({
-      title: "Dados CSV Carregados",
-      description: `${csvData.length} cadastro(s) prontos para processamento.`,
-    });
-
-    // Here you would typically process the CSV data
-    // For now, we'll just show a message
-  };
-
-  const handleViewDetails = (jobId: string) => {
-    toast({
-      title: "Detalhes do Job",
-      description: `Abrindo detalhes para o job ${jobId}`,
-    });
-  };
-
-  const handleDownloadComprovante = (jobId: string) => {
-    toast({
-      title: "Download Iniciado",
-      description: `Baixando comprovante do job ${jobId}`,
-    });
+  const handleCSVUpload = async (data: any[]) => {
+    try {
+      for (const cadastroData of data) {
+        await supabase.functions.invoke('process-cadastro', {
+          body: { cadastroData }
+        });
+      }
+      
+      toast({
+        title: "CSV Processado",
+        description: `${data.length} cadastros foram processados com sucesso.`,
+      });
+      
+      await fetchMetrics();
+    } catch (error) {
+      console.error('Error processing CSV:', error);
+      toast({
+        title: "Erro",
+        description: "Erro ao processar CSV. Tente novamente.",
+        variant: "destructive",
+      });
+    }
   };
 
   return (
     <div className="min-h-screen bg-background">
-      <Header />
-      
       <main className="container mx-auto px-4 py-8 space-y-8">
-        {/* Metrics Dashboard */}
-        <DashboardMetrics metrics={mockMetrics} />
+        {/* Page Header */}
+        <div className="space-y-2">
+          <h1 className="text-4xl font-bold bg-gradient-to-r from-primary to-primary/70 bg-clip-text text-transparent">
+            Cadastro Regularize
+          </h1>
+          <p className="text-muted-foreground text-lg">
+            Sistema automatizado para cadastro na plataforma Regularize/PGFN
+          </p>
+        </div>
 
-        {/* Main Content Tabs */}
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <div className="flex items-center justify-between">
-            <TabsList className="grid w-fit grid-cols-4 rounded-2xl">
-              <TabsTrigger value="novo" className="rounded-xl">
-                <Plus className="h-4 w-4 mr-2" />
-                Novo Cadastro
-              </TabsTrigger>
-              <TabsTrigger value="lote" className="rounded-xl">
-                <FileSpreadsheet className="h-4 w-4 mr-2" />
-                Upload Lote
-              </TabsTrigger>
-              <TabsTrigger value="jobs" className="rounded-xl">
-                <List className="h-4 w-4 mr-2" />
-                Jobs
-              </TabsTrigger>
-              <TabsTrigger value="config" className="rounded-xl">
-                <Settings className="h-4 w-4 mr-2" />
-                Config
-              </TabsTrigger>
-            </TabsList>
-          </div>
+        {/* Metrics */}
+        <DashboardMetrics metrics={metrics} />
+
+        {/* Main Content */}
+        <Tabs defaultValue="novo" className="space-y-6">
+          <TabsList className="grid w-full grid-cols-3 rounded-2xl">
+            <TabsTrigger value="novo" className="rounded-xl">
+              <UserPlus className="h-4 w-4 mr-2" />
+              Novo Cadastro
+            </TabsTrigger>
+            <TabsTrigger value="upload" className="rounded-xl">
+              <FileUp className="h-4 w-4 mr-2" />
+              Upload CSV
+            </TabsTrigger>
+            <TabsTrigger value="historico" className="rounded-xl">
+              Histórico
+            </TabsTrigger>
+          </TabsList>
 
           <TabsContent value="novo" className="space-y-6">
             <CadastroWizard 
-              onSubmit={handleSubmitCadastro}
+              onSubmit={handleCadastroSubmit}
               isSubmitting={isSubmitting}
             />
           </TabsContent>
 
-          <TabsContent value="lote" className="space-y-6">
-            <CSVUpload onDataLoaded={handleCSVData} />
-            
+          <TabsContent value="upload" className="space-y-6">
             <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
-              <CardContent className="p-6 text-center">
-                <h3 className="text-lg font-medium mb-2">Processamento em Lote</h3>
-                <p className="text-muted-foreground mb-4">
-                  Carregue um arquivo CSV para processar múltiplos cadastros automaticamente.
-                </p>
-                <div className="grid grid-cols-3 gap-4 text-sm">
-                  <div className="space-y-1">
-                    <div className="font-medium text-primary">Até 100</div>
-                    <div className="text-muted-foreground">cadastros por vez</div>
-                  </div>
-                  <div className="space-y-1">
-                    <div className="font-medium text-success">4 Workers</div>
-                    <div className="text-muted-foreground">processamento paralelo</div>
-                  </div>
-                  <div className="space-y-1">
-                    <div className="font-medium text-warning">2-3 min</div>
-                    <div className="text-muted-foreground">por cadastro</div>
-                  </div>
-                </div>
+              <CardHeader>
+                <CardTitle>Upload de Lote (CSV)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <CSVUpload onDataLoaded={handleCSVUpload} />
               </CardContent>
             </Card>
           </TabsContent>
 
-          <TabsContent value="jobs" className="space-y-6">
-            <JobsList
-              jobs={jobs}
-              onViewDetails={handleViewDetails}
-              onDownloadComprovante={handleDownloadComprovante}
-            />
-          </TabsContent>
-
-          <TabsContent value="config" className="space-y-6">
-            <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
-              <CardContent className="p-6 text-center">
-                <Settings className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
-                <h3 className="text-lg font-medium mb-2">Configurações</h3>
-                <p className="text-muted-foreground">
-                  Configure integrações, workers e outras configurações avançadas.
-                </p>
-                <Button className="mt-4 rounded-2xl" disabled>
-                  Em Desenvolvimento
-                </Button>
-              </CardContent>
-            </Card>
+          <TabsContent value="historico" className="space-y-6">
+            <JobsList onJobUpdate={fetchMetrics} />
           </TabsContent>
         </Tabs>
       </main>

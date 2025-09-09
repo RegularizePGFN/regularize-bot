@@ -14,13 +14,111 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      cadastros: {
+        Row: {
+          celular: string
+          cnpj: string
+          comprovante_url: string | null
+          cpf: string
+          created_at: string
+          data_nascimento: string
+          email: string
+          error_message: string | null
+          etapa_atual: string | null
+          frase_seguranca_hash: string
+          id: string
+          nome_mae: string | null
+          progresso: number | null
+          senha_hash: string
+          status: string
+          tempo_estimado: number | null
+          tempo_fim: string | null
+          tempo_inicio: string | null
+          updated_at: string
+        }
+        Insert: {
+          celular: string
+          cnpj: string
+          comprovante_url?: string | null
+          cpf: string
+          created_at?: string
+          data_nascimento: string
+          email: string
+          error_message?: string | null
+          etapa_atual?: string | null
+          frase_seguranca_hash: string
+          id?: string
+          nome_mae?: string | null
+          progresso?: number | null
+          senha_hash: string
+          status?: string
+          tempo_estimado?: number | null
+          tempo_fim?: string | null
+          tempo_inicio?: string | null
+          updated_at?: string
+        }
+        Update: {
+          celular?: string
+          cnpj?: string
+          comprovante_url?: string | null
+          cpf?: string
+          created_at?: string
+          data_nascimento?: string
+          email?: string
+          error_message?: string | null
+          etapa_atual?: string | null
+          frase_seguranca_hash?: string
+          id?: string
+          nome_mae?: string | null
+          progresso?: number | null
+          senha_hash?: string
+          status?: string
+          tempo_estimado?: number | null
+          tempo_fim?: string | null
+          tempo_inicio?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      metrics: {
+        Row: {
+          cadastros_hoje: number | null
+          created_at: string
+          date: string
+          id: string
+          taxa_sucesso: number | null
+          tempo_medio: number | null
+          updated_at: string
+        }
+        Insert: {
+          cadastros_hoje?: number | null
+          created_at?: string
+          date?: string
+          id?: string
+          taxa_sucesso?: number | null
+          tempo_medio?: number | null
+          updated_at?: string
+        }
+        Update: {
+          cadastros_hoje?: number | null
+          created_at?: string
+          date?: string
+          id?: string
+          taxa_sucesso?: number | null
+          tempo_medio?: number | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      calculate_daily_metrics: {
+        Args: Record<PropertyKey, never>
+        Returns: undefined
+      }
     }
     Enums: {
       [_ in never]: never
