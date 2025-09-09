@@ -151,7 +151,14 @@ async function checkCNPJRegistration(cnpj: string): Promise<CNPJCheckResult> {
       }
     } else {
       // No redirect, analyze the response content and URL
-      const responseText = await response.text()
+      let responseText = ''
+      try {
+        responseText = await response.text()
+      } catch (error) {
+        console.log('Error reading response body:', error.message)
+        responseText = ''
+      }
+      
       finalUrl = response.url || currentUrl
       
       console.log(`Final URL: ${finalUrl}`)
@@ -201,14 +208,16 @@ async function checkCNPJRegistration(cnpj: string): Promise<CNPJCheckResult> {
       let contentToAnalyze = ''
       try {
         if (response.status < 300 || response.status >= 400) {
-          contentToAnalyze = await response.text()
+          // Use the already read responseText if available
+          contentToAnalyze = responseText || ''
         } else {
           // Fetch the redirected page
           const finalResponse = await fetch(finalUrl)
           contentToAnalyze = await finalResponse.text()
         }
-      } catch {
-        contentToAnalyze = await response.text()
+      } catch (error) {
+        console.log('Error getting content for analysis:', error.message)
+        contentToAnalyze = responseText || ''
       }
       
       const contentLower = contentToAnalyze.toLowerCase()
