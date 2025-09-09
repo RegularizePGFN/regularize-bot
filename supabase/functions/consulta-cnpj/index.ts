@@ -97,7 +97,7 @@ serve(async (req) => {
       }
     )
   }
-}
+})
 
 async function checkCNPJRegistration(cnpj: string): Promise<boolean> {
   const formattedCNPJ = formatCNPJ(cnpj)
