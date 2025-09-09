@@ -120,6 +120,7 @@ async function checkCNPJRegistration(cnpj: string): Promise<CNPJCheckResult> {
     let finalUrl = currentUrl
     let method = 'url_analysis'
     let evidence = ''
+    let responseText = '' // Declare at function scope
     
     // Make the POST request to submit CNPJ
     const response = await fetch('https://www.regularize.pgfn.gov.br/cadastro', {
@@ -151,7 +152,6 @@ async function checkCNPJRegistration(cnpj: string): Promise<CNPJCheckResult> {
       }
     } else {
       // No redirect, analyze the response content and URL
-      let responseText = ''
       try {
         responseText = await response.text()
       } catch (error) {
