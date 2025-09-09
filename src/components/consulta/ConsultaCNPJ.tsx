@@ -16,6 +16,10 @@ interface ConsultaResult {
   hasRegistration: boolean | null;
   status: 'success' | 'error';
   message: string;
+  finalUrl?: string;
+  method?: string;
+  evidence?: string;
+  timestamp?: string;
 }
 
 interface ConsultaJob {
@@ -357,14 +361,42 @@ export function ConsultaCNPJ({ onContinue }: ConsultaCNPJProps) {
           <CardContent>
             <div className="space-y-3 max-h-96 overflow-y-auto">
               {results.map((result, index) => (
-                <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
-                  <div className="flex items-center gap-3">
-                    {getStatusIcon(result)}
-                    <span className="font-mono">{formatCNPJ(result.cnpj)}</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-sm text-muted-foreground">{result.message}</span>
+                <div key={index} className="p-4 border rounded-lg space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      {getStatusIcon(result)}
+                      <span className="font-mono text-lg">{formatCNPJ(result.cnpj)}</span>
+                    </div>
                     {getStatusBadge(result)}
+                  </div>
+                  
+                  <div className="text-sm text-muted-foreground">
+                    <p>{result.message}</p>
+                    {result.finalUrl && result.finalUrl !== 'error' && (
+                      <p className="mt-1">
+                        <strong>URL Final:</strong> {result.finalUrl}
+                      </p>
+                    )}
+                    {result.method && (
+                      <p className="mt-1">
+                        <strong>Método:</strong> {result.method === 'redirect_analysis' ? 'Análise de Redirecionamento' : 
+                                                    result.method === 'js_redirect_analysis' ? 'Redirecionamento JavaScript' :
+                                                    result.method === 'content_analysis_login' ? 'Análise de Conteúdo (Login)' :
+                                                    result.method === 'content_analysis_registration' ? 'Análise de Conteúdo (Registro)' :
+                                                    result.method === 'content_analysis_uncertain' ? 'Análise de Conteúdo (Incerto)' :
+                                                    result.method === 'error' ? 'Erro' : result.method}
+                      </p>
+                    )}
+                    {result.evidence && result.evidence !== 'Error: undefined' && (
+                      <p className="mt-1">
+                        <strong>Evidência:</strong> {result.evidence}
+                      </p>
+                    )}
+                    {result.timestamp && (
+                      <p className="mt-1 text-xs">
+                        <strong>Timestamp:</strong> {new Date(result.timestamp).toLocaleString('pt-BR')}
+                      </p>
+                    )}
                   </div>
                 </div>
               ))}

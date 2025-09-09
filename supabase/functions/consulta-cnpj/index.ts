@@ -99,25 +99,29 @@ serve(async (req) => {
   }
 })
 
-async function checkCNPJRegistration(cnpj: string): Promise<boolean> {
+interface CNPJCheckResult {
+  cnpj: string
+  hasRegistration: boolean
+  finalUrl: string
+  method: string
+  evidence: string
+  timestamp: string
+}
+
+async function checkCNPJRegistration(cnpj: string): Promise<CNPJCheckResult> {
   const formattedCNPJ = formatCNPJ(cnpj)
+  const timestamp = new Date().toISOString()
   
   try {
     console.log(`Consultando CNPJ ${formattedCNPJ} no Regularize`)
     
-    // First, try to access the registration page to get any necessary tokens or session data
-    const initialResponse = await fetch('https://www.regularize.pgfn.gov.br/', {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache'
-      }
-    })
-
-    // Check if we can access the registration endpoint
+    // Step 1: Follow the exact flow described - start at the base URL
+    let currentUrl = 'https://www.regularize.pgfn.gov.br/cadastro'
+    let finalUrl = currentUrl
+    let method = 'url_analysis'
+    let evidence = ''
+    
+    // Make the POST request to submit CNPJ
     const response = await fetch('https://www.regularize.pgfn.gov.br/cadastro', {
       method: 'POST',
       headers: {
@@ -130,66 +134,152 @@ async function checkCNPJRegistration(cnpj: string): Promise<boolean> {
         'Cache-Control': 'no-cache',
         'Pragma': 'no-cache'
       },
-      body: `cnpj=${encodeURIComponent(formattedCNPJ)}&tipoPessoa=J`
+      body: `cnpj=${encodeURIComponent(formattedCNPJ)}&tipoPessoa=J`,
+      redirect: 'manual' // Don't follow redirects automatically
     })
 
-    const responseText = await response.text()
     console.log(`Response status: ${response.status}`)
-    console.log(`Response preview: ${responseText.substring(0, 300)}...`)
     
-    // Enhanced indicators for already registered CNPJs
-    const alreadyRegisteredIndicators = [
-      'já está cadastrado',
-      'já cadastrado',
-      'efetue login com senha', 
-      'efetue o login',
-      'fazer login',
-      'cnpj informado já está cadastrado',
-      'cnpj já cadastrado',
-      'already registered',
-      'login required',
-      'senha de acesso',
-      'digite sua senha',
-      'entrar no sistema',
-      'acesso ao sistema'
-    ]
-    
-    // Also check for error indicators that suggest CNPJ is available
-    const availableIndicators = [
-      'cnpj não encontrado',
-      'cnpj inválido', 
-      'dados não encontrados',
-      'não há cadastro',
-      'cadastro não encontrado'
-    ]
-    
-    const responseTextLower = responseText.toLowerCase()
-    
-    const isRegistered = alreadyRegisteredIndicators.some(indicator => 
-      responseTextLower.includes(indicator.toLowerCase())
-    )
-    
-    const isAvailable = availableIndicators.some(indicator => 
-      responseTextLower.includes(indicator.toLowerCase())
-    )
-    
-    // If we get a 405 (Method Not Allowed), it might mean the endpoint changed
-    // In this case, we'll check for specific content patterns
-    if (response.status === 405) {
-      console.log(`Method not allowed - checking for alternative patterns`)
-      // For now, return false (available) since we can't determine the real status
-      return false
+    // Check for redirects
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location')
+      if (location) {
+        finalUrl = location.startsWith('http') ? location : `https://www.regularize.pgfn.gov.br${location}`
+        console.log(`Redirect detected to: ${finalUrl}`)
+        method = 'redirect_analysis'
+        evidence = `HTTP ${response.status} redirect to ${finalUrl}`
+      }
+    } else {
+      // No redirect, analyze the response content and URL
+      const responseText = await response.text()
+      finalUrl = response.url || currentUrl
+      
+      console.log(`Final URL: ${finalUrl}`)
+      console.log(`Response preview: ${responseText.substring(0, 500)}...`)
+      
+      // Look for JavaScript redirects in the content
+      const jsRedirectMatch = responseText.match(/location\.href\s*=\s*["']([^"']+)["']/i) ||
+                             responseText.match(/window\.location\s*=\s*["']([^"']+)["']/i) ||
+                             responseText.match(/document\.location\s*=\s*["']([^"']+)["']/i)
+      
+      if (jsRedirectMatch) {
+        const jsRedirectUrl = jsRedirectMatch[1]
+        finalUrl = jsRedirectUrl.startsWith('http') ? jsRedirectUrl : `https://www.regularize.pgfn.gov.br${jsRedirectUrl}`
+        console.log(`JavaScript redirect detected to: ${finalUrl}`)
+        method = 'js_redirect_analysis'
+        evidence = `JavaScript redirect to ${finalUrl}`
+      }
+      
+      // Content analysis as fallback
+      if (!jsRedirectMatch) {
+        method = 'content_analysis'
+        evidence = `Content analysis of ${responseText.length} chars`
+      }
     }
     
-    console.log(`CNPJ ${formattedCNPJ} registration status: ${isRegistered ? 'REGISTERED' : 'NOT_REGISTERED'}`)
-    console.log(`Available indicators found: ${isAvailable}`)
+    // Determine registration status based on final URL
+    let hasRegistration = false
     
-    return isRegistered
+    // Rule: If redirects back to base URL (https://www.regularize.pgfn.gov.br), CNPJ is already registered
+    if (finalUrl === 'https://www.regularize.pgfn.gov.br' || 
+        finalUrl === 'https://www.regularize.pgfn.gov.br/' ||
+        finalUrl.includes('/login') ||
+        finalUrl.includes('/dashboard') ||
+        finalUrl.includes('/home')) {
+      hasRegistration = true
+      console.log(`CNPJ ${formattedCNPJ}: JÁ CADASTRADO (redirected to base URL)`)
+    }
+    // Rule: If goes to /cadastro/cnpj, CNPJ is available for registration
+    else if (finalUrl.includes('/cadastro/cnpj') || 
+             finalUrl.includes('/cadastro') && finalUrl !== 'https://www.regularize.pgfn.gov.br/cadastro') {
+      hasRegistration = false
+      console.log(`CNPJ ${formattedCNPJ}: DISPONÍVEL (redirected to registration form)`)
+    }
+    // Fallback: content analysis
+    else {
+      // Get the final page content for analysis
+      let contentToAnalyze = ''
+      try {
+        if (response.status < 300 || response.status >= 400) {
+          contentToAnalyze = await response.text()
+        } else {
+          // Fetch the redirected page
+          const finalResponse = await fetch(finalUrl)
+          contentToAnalyze = await finalResponse.text()
+        }
+      } catch {
+        contentToAnalyze = await response.text()
+      }
+      
+      const contentLower = contentToAnalyze.toLowerCase()
+      
+      // Look for registration form fields (indicates CNPJ is available)
+      const registrationFormIndicators = [
+        'cpf do responsável',
+        'nome da mãe',
+        'data de nascimento',
+        'confirmar senha',
+        'frase de segurança',
+        'input[name="cpf"]',
+        'input[name="dataNascimento"]',
+        'input[name="email"]'
+      ]
+      
+      // Look for login/already registered indicators
+      const alreadyRegisteredIndicators = [
+        'já está cadastrado',
+        'efetue login',
+        'digite sua senha',
+        'esqueceu a senha',
+        'entrar no sistema',
+        'login com gov.br'
+      ]
+      
+      const hasRegistrationForm = registrationFormIndicators.some(indicator => 
+        contentLower.includes(indicator.toLowerCase())
+      )
+      
+      const hasLoginForm = alreadyRegisteredIndicators.some(indicator => 
+        contentLower.includes(indicator.toLowerCase())
+      )
+      
+      if (hasLoginForm && !hasRegistrationForm) {
+        hasRegistration = true
+        method = 'content_analysis_login'
+        evidence = `Login form detected in content`
+      } else if (hasRegistrationForm && !hasLoginForm) {
+        hasRegistration = false
+        method = 'content_analysis_registration'
+        evidence = `Registration form detected in content`
+      } else {
+        // Default to available if uncertain
+        hasRegistration = false
+        method = 'content_analysis_uncertain'
+        evidence = `Uncertain result, defaulting to available`
+      }
+      
+      console.log(`CNPJ ${formattedCNPJ}: ${hasRegistration ? 'JÁ CADASTRADO' : 'DISPONÍVEL'} (content analysis)`)
+    }
+    
+    return {
+      cnpj: formattedCNPJ,
+      hasRegistration,
+      finalUrl,
+      method,
+      evidence,
+      timestamp
+    }
     
   } catch (error) {
     console.error(`Erro ao consultar CNPJ ${formattedCNPJ}:`, error)
-    // If there's an error, assume the CNPJ is available (false = não possui cadastro)
-    return false
+    return {
+      cnpj: formattedCNPJ,
+      hasRegistration: false, // Default to available on error
+      finalUrl: 'error',
+      method: 'error',
+      evidence: `Error: ${error.message}`,
+      timestamp
+    }
   }
 }
 
@@ -222,17 +312,21 @@ async function processJob(jobId: string, cnpjs: string[]) {
       console.log(`Processando CNPJ: ${cnpj}`)
       
       try {
-        // Real CNPJ consultation to Regularize
-        const hasRegistration = await checkCNPJRegistration(cnpj)
+        // Real CNPJ consultation to Regularize with detailed result
+        const checkResult = await checkCNPJRegistration(cnpj)
         
         results.push({
-          cnpj,
-          hasRegistration,
+          cnpj: checkResult.cnpj,
+          hasRegistration: checkResult.hasRegistration,
           status: 'success',
-          message: hasRegistration ? 'CNPJ já possui cadastro na Regularize' : 'CNPJ não possui cadastro na Regularize'
+          message: checkResult.hasRegistration ? 'CNPJ já possui cadastro na Regularize' : 'CNPJ não possui cadastro na Regularize',
+          finalUrl: checkResult.finalUrl,
+          method: checkResult.method,
+          evidence: checkResult.evidence,
+          timestamp: checkResult.timestamp
         })
         
-        console.log(`CNPJ ${cnpj}: ${hasRegistration ? 'JÁ CADASTRADO' : 'DISPONÍVEL'}`)
+        console.log(`CNPJ ${cnpj}: ${checkResult.hasRegistration ? 'JÁ CADASTRADO' : 'DISPONÍVEL'} (${checkResult.method})`)
         
       } catch (error) {
         console.error(`Erro ao processar CNPJ ${cnpj}:`, error)
@@ -240,7 +334,11 @@ async function processJob(jobId: string, cnpjs: string[]) {
           cnpj,
           hasRegistration: null,
           status: 'error',
-          message: `Erro ao consultar: ${error.message}`
+          message: `Erro ao consultar: ${error.message}`,
+          finalUrl: 'error',
+          method: 'error',
+          evidence: `Error: ${error.message}`,
+          timestamp: new Date().toISOString()
         })
       }
       
