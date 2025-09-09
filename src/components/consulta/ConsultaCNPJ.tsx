@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -6,7 +6,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CheckCircle, XCircle, AlertCircle, Search, FileText } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
+import { CheckCircle, XCircle, AlertCircle, Search, FileText, Clock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -17,6 +18,18 @@ interface ConsultaResult {
   message: string;
 }
 
+interface ConsultaJob {
+  id: string;
+  cnpjs: string[];
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  results: ConsultaResult[] | null;
+  error_message: string | null;
+  progress: number;
+  total: number;
+  created_at: string;
+  updated_at: string;
+}
+
 interface ConsultaCNPJProps {
   onContinue: (cnpjsWithoutRegistration: string[]) => void;
 }
@@ -25,6 +38,7 @@ export function ConsultaCNPJ({ onContinue }: ConsultaCNPJProps) {
   const [singleCNPJ, setSingleCNPJ] = useState("");
   const [multipleCNPJs, setMultipleCNPJs] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [currentJob, setCurrentJob] = useState<ConsultaJob | null>(null);
   const [results, setResults] = useState<ConsultaResult[]>([]);
   const { toast } = useToast();
 
@@ -42,6 +56,49 @@ export function ConsultaCNPJ({ onContinue }: ConsultaCNPJProps) {
     return [...new Set(matches.map(cnpj => cnpj.replace(/\D/g, '')))];
   };
 
+  // Poll job status
+  useEffect(() => {
+    if (!currentJob || currentJob.status === 'completed' || currentJob.status === 'failed') {
+      return;
+    }
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const response = await supabase.functions.invoke('consulta-cnpj', {
+          body: { jobId: currentJob.id }
+        });
+
+        if (response.error) throw response.error;
+
+        const { job } = response.data;
+        setCurrentJob(job);
+
+        if (job.results) {
+          setResults(job.results);
+        }
+
+        if (job.status === 'completed') {
+          toast({
+            title: "Consulta Finalizada",
+            description: `${job.progress} CNPJs processados com sucesso.`,
+          });
+          setIsLoading(false);
+        } else if (job.status === 'failed') {
+          toast({
+            title: "Erro na Consulta",
+            description: job.error_message || "Erro desconhecido",
+            variant: "destructive",
+          });
+          setIsLoading(false);
+        }
+      } catch (error) {
+        console.error('Error polling job status:', error);
+      }
+    }, 2000);
+
+    return () => clearInterval(pollInterval);
+  }, [currentJob, toast]);
+
   const handleConsulta = async (cnpjs: string[]) => {
     if (cnpjs.length === 0) {
       toast({
@@ -54,6 +111,7 @@ export function ConsultaCNPJ({ onContinue }: ConsultaCNPJProps) {
 
     setIsLoading(true);
     setResults([]);
+    setCurrentJob(null);
 
     try {
       const response = await supabase.functions.invoke('consulta-cnpj', {
@@ -62,25 +120,33 @@ export function ConsultaCNPJ({ onContinue }: ConsultaCNPJProps) {
 
       if (response.error) throw response.error;
 
-      const { results: consultaResults } = response.data;
-      setResults(consultaResults);
-
-      const successCount = consultaResults.filter((r: ConsultaResult) => r.status === 'success').length;
-      const errorCount = consultaResults.filter((r: ConsultaResult) => r.status === 'error').length;
+      const { jobId } = response.data;
+      
+      // Set initial job state
+      setCurrentJob({
+        id: jobId,
+        cnpjs,
+        status: 'pending',
+        results: null,
+        error_message: null,
+        progress: 0,
+        total: cnpjs.length,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      });
 
       toast({
-        title: "Consulta Finalizada",
-        description: `${successCount} CNPJs consultados com sucesso. ${errorCount} erros.`,
+        title: "Consulta Iniciada",
+        description: `Processando ${cnpjs.length} CNPJs...`,
       });
 
     } catch (error) {
-      console.error('Error consulting CNPJs:', error);
+      console.error('Error starting CNPJ consultation:', error);
       toast({
         title: "Erro",
-        description: "Erro ao consultar CNPJs. Tente novamente.",
+        description: "Erro ao iniciar consulta. Tente novamente.",
         variant: "destructive",
       });
-    } finally {
       setIsLoading(false);
     }
   };
@@ -118,6 +184,40 @@ export function ConsultaCNPJ({ onContinue }: ConsultaCNPJProps) {
     }
 
     onContinue(cnpjsWithoutRegistration);
+  };
+
+  const getJobStatusIcon = () => {
+    if (!currentJob) return null;
+    
+    switch (currentJob.status) {
+      case 'pending':
+        return <Clock className="h-4 w-4 text-yellow-500" />;
+      case 'processing':
+        return <Clock className="h-4 w-4 text-blue-500 animate-spin" />;
+      case 'completed':
+        return <CheckCircle className="h-4 w-4 text-green-600" />;
+      case 'failed':
+        return <XCircle className="h-4 w-4 text-destructive" />;
+      default:
+        return null;
+    }
+  };
+
+  const getJobStatusText = () => {
+    if (!currentJob) return '';
+    
+    switch (currentJob.status) {
+      case 'pending':
+        return 'Aguardando processamento...';
+      case 'processing':
+        return `Processando ${currentJob.progress}/${currentJob.total} CNPJs...`;
+      case 'completed':
+        return 'Consulta finalizada';
+      case 'failed':
+        return 'Erro no processamento';
+      default:
+        return '';
+    }
   };
 
   const getStatusIcon = (result: ConsultaResult) => {
@@ -202,6 +302,40 @@ export function ConsultaCNPJ({ onContinue }: ConsultaCNPJProps) {
           </Tabs>
         </CardContent>
       </Card>
+
+      {currentJob && (
+        <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              {getJobStatusIcon()}
+              Status da Consulta
+            </CardTitle>
+            <p className="text-sm text-muted-foreground">
+              {getJobStatusText()}
+            </p>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span>Progresso</span>
+                  <span>{currentJob.progress}/{currentJob.total}</span>
+                </div>
+                <Progress 
+                  value={(currentJob.progress / currentJob.total) * 100} 
+                  className="w-full" 
+                />
+              </div>
+              
+              {currentJob.error_message && (
+                <div className="p-3 border border-destructive/20 bg-destructive/10 rounded-lg">
+                  <p className="text-sm text-destructive">{currentJob.error_message}</p>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {results.length > 0 && (
         <Card className="border-border/50 bg-card/50 backdrop-blur-sm">

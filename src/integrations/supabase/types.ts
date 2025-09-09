@@ -80,6 +80,42 @@ export type Database = {
         }
         Relationships: []
       }
+      cnpj_jobs: {
+        Row: {
+          cnpjs: string[]
+          created_at: string
+          error_message: string | null
+          id: string
+          progress: number | null
+          results: Json | null
+          status: string
+          total: number | null
+          updated_at: string
+        }
+        Insert: {
+          cnpjs: string[]
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          progress?: number | null
+          results?: Json | null
+          status?: string
+          total?: number | null
+          updated_at?: string
+        }
+        Update: {
+          cnpjs?: string[]
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          progress?: number | null
+          results?: Json | null
+          status?: string
+          total?: number | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       metrics: {
         Row: {
           cadastros_hoje: number | null
