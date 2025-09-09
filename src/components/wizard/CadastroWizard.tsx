@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { ChevronLeft, ChevronRight, FileCheck } from "lucide-react";
+import { ConsultaCNPJ } from "@/components/consulta/ConsultaCNPJ";
 import { IdentificacaoStep } from "./steps/IdentificacaoStep";
 import { ResponsavelStep } from "./steps/ResponsavelStep";
 import { SegurancaStep } from "./steps/SegurancaStep";
@@ -42,10 +43,11 @@ const initialData: CadastroData = {
 };
 
 const steps = [
-  { id: 1, title: "Identificação", description: "CNPJ da empresa" },
-  { id: 2, title: "Responsável", description: "Dados do responsável" },
-  { id: 3, title: "Segurança", description: "Senha e segurança" },
-  { id: 4, title: "Finalizar", description: "Revisar e confirmar" },
+  { id: 1, title: "Consulta", description: "Verificar CNPJ na Regularize" },
+  { id: 2, title: "Identificação", description: "Selecionar CNPJ" },
+  { id: 3, title: "Responsável", description: "Dados do responsável" },
+  { id: 4, title: "Segurança", description: "Senha e segurança" },
+  { id: 5, title: "Finalizar", description: "Revisar e confirmar" },
 ];
 
 interface CadastroWizardProps {
@@ -56,6 +58,7 @@ interface CadastroWizardProps {
 export function CadastroWizard({ onSubmit, isSubmitting = false }: CadastroWizardProps) {
   const [currentStep, setCurrentStep] = useState(1);
   const [data, setData] = useState<CadastroData>(initialData);
+  const [availableCNPJs, setAvailableCNPJs] = useState<string[]>([]);
 
   const updateData = (stepData: Partial<CadastroData>) => {
     setData(prev => ({ ...prev, ...stepData }));
@@ -77,15 +80,22 @@ export function CadastroWizard({ onSubmit, isSubmitting = false }: CadastroWizar
     onSubmit(data);
   };
 
+  const handleConsultaComplete = (cnpjs: string[]) => {
+    setAvailableCNPJs(cnpjs);
+    setCurrentStep(2);
+  };
+
   const renderStep = () => {
     switch (currentStep) {
       case 1:
-        return <IdentificacaoStep data={data} updateData={updateData} />;
+        return <ConsultaCNPJ onContinue={handleConsultaComplete} />;
       case 2:
-        return <ResponsavelStep data={data} updateData={updateData} />;
+        return <IdentificacaoStep data={data} updateData={updateData} availableCNPJs={availableCNPJs} />;
       case 3:
-        return <SegurancaStep data={data} updateData={updateData} />;
+        return <ResponsavelStep data={data} updateData={updateData} />;
       case 4:
+        return <SegurancaStep data={data} updateData={updateData} />;
+      case 5:
         return <FinalizarStep data={data} updateData={updateData} onSubmit={handleSubmit} isSubmitting={isSubmitting} />;
       default:
         return null;
@@ -95,14 +105,16 @@ export function CadastroWizard({ onSubmit, isSubmitting = false }: CadastroWizar
   const canProceed = () => {
     switch (currentStep) {
       case 1:
-        return data.cnpj.length >= 14;
+        return availableCNPJs.length > 0;
       case 2:
-        return data.cpf && data.email && data.celular && data.dataNascimento;
+        return data.cnpj.length >= 14;
       case 3:
+        return data.cpf && data.email && data.celular && data.dataNascimento;
+      case 4:
         return data.senha && data.confirmarSenha && data.fraseSeguranca && 
                data.senha === data.confirmarSenha && 
                data.fraseSeguranca.length >= 10 && data.fraseSeguranca.length <= 140;
-      case 4:
+      case 5:
         return data.aceitaTermos;
       default:
         return false;
@@ -142,7 +154,7 @@ export function CadastroWizard({ onSubmit, isSubmitting = false }: CadastroWizar
         </div>
 
         {/* Navigation */}
-        {currentStep < 4 && (
+        {currentStep < 5 && (
           <div className="flex justify-between">
             <Button
               variant="outline"
