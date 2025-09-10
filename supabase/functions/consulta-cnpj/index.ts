@@ -132,10 +132,13 @@ async function checkCNPJRegistration(cnpj: string): Promise<CNPJCheckResult> {
 }
 
 async function simulatePlaywrightFlow(cnpj: string, formattedCNPJ: string, timestamp: string): Promise<CNPJCheckResult> {
-  console.log(`Simulando fluxo Playwright para CNPJ ${formattedCNPJ}`)
+  console.log(`🔍 =================================`)
+  console.log(`🔍 INICIANDO ANÁLISE PARA CNPJ: ${formattedCNPJ}`)
+  console.log(`🔍 =================================`)
   
   try {
     // Step 1: Get the initial page to extract any necessary tokens
+    console.log(`🔍 STEP 1: Carregando página inicial...`)
     const initialResponse = await fetch('https://www.regularize.pgfn.gov.br/cadastro', {
       method: 'GET',
       headers: {
@@ -148,13 +151,16 @@ async function simulatePlaywrightFlow(cnpj: string, formattedCNPJ: string, times
     })
     
     const pageContent = await initialResponse.text()
-    console.log(`Página inicial carregada, tamanho: ${pageContent.length} chars`)
+    console.log(`🔍 STEP 1 COMPLETO: Página inicial carregada, tamanho: ${pageContent.length} chars`)
     
     // Extract potential CSRF tokens or session data
     const csrfToken = extractCSRFToken(pageContent)
     const cookies = extractCookies(initialResponse.headers)
+    console.log(`🔍 CSRF Token encontrado: ${csrfToken ? 'SIM' : 'NÃO'}`)
+    console.log(`🔍 Cookies extraídos: ${cookies || 'NENHUM'}`)
     
     // Step 2: Submit CNPJ form (simulating button click)
+    console.log(`🔍 STEP 2: Enviando formulário com CNPJ ${cnpj}...`)
     const submitResponse = await fetch('https://www.regularize.pgfn.gov.br/cadastro', {
       method: 'POST',
       headers: {
@@ -172,7 +178,8 @@ async function simulatePlaywrightFlow(cnpj: string, formattedCNPJ: string, times
       redirect: 'manual'
     })
     
-    console.log(`Submit response status: ${submitResponse.status}`)
+    console.log(`🔍 STEP 2 COMPLETO: Submit response status: ${submitResponse.status}`)
+    console.log(`🔍 Submit response URL: ${submitResponse.url}`)
     
     // Step 3: Handle response and redirects
     let finalUrl = ''
@@ -193,7 +200,12 @@ async function simulatePlaywrightFlow(cnpj: string, formattedCNPJ: string, times
       const responseContent = await submitResponse.text()
       finalUrl = submitResponse.url || 'https://www.regularize.pgfn.gov.br/cadastro'
       
-      console.log(`Response content preview: ${responseContent.substring(0, 1000)}...`)
+      console.log(`🔍 STEP 3: Analisando conteúdo da resposta...`)
+      console.log(`🔍 Response URL: ${finalUrl}`)
+      console.log(`🔍 Response content length: ${responseContent.length} chars`)
+      console.log(`🔍 Response content preview (primeiros 1500 chars):`)
+      console.log(responseContent.substring(0, 1500))
+      console.log(`🔍 ===== FIM DO PREVIEW =====`)
       
       // Check for hCaptcha
       if (responseContent.includes('hcaptcha.com') || responseContent.includes('h-captcha')) {
@@ -249,7 +261,13 @@ async function simulatePlaywrightFlow(cnpj: string, formattedCNPJ: string, times
     // Step 4: Determine registration status based on final URL
     const hasRegistration = determineRegistrationStatus(finalUrl)
     
-    console.log(`CNPJ ${formattedCNPJ}: ${hasRegistration ? 'JÁ CADASTRADO' : 'DISPONÍVEL'} (${method})`)
+    console.log(`🔍 =================================`)
+    console.log(`🔍 RESULTADO FINAL PARA CNPJ: ${formattedCNPJ}`)
+    console.log(`🔍 Status: ${hasRegistration ? 'JÁ CADASTRADO' : 'DISPONÍVEL'}`)
+    console.log(`🔍 Método: ${method}`)
+    console.log(`🔍 URL Final: ${finalUrl}`)
+    console.log(`🔍 Evidência: ${evidence}`)
+    console.log(`🔍 =================================`)
     
     return {
       cnpj: formattedCNPJ,
