@@ -193,6 +193,8 @@ async function simulatePlaywrightFlow(cnpj: string, formattedCNPJ: string, times
       const responseContent = await submitResponse.text()
       finalUrl = submitResponse.url || 'https://www.regularize.pgfn.gov.br/cadastro'
       
+      console.log(`Response content preview: ${responseContent.substring(0, 1000)}...`)
+      
       // Check for hCaptcha
       if (responseContent.includes('hcaptcha.com') || responseContent.includes('h-captcha')) {
         console.log('hCaptcha detectado na resposta')
@@ -212,11 +214,34 @@ async function simulatePlaywrightFlow(cnpj: string, formattedCNPJ: string, times
         method = 'content_analysis'
         evidence = `Content analysis of ${responseContent.length} chars`
         
-        // Check for registration form indicators
-        if (responseContent.includes('cpf') || responseContent.includes('nascimento') || responseContent.includes('email')) {
-          finalUrl = 'https://www.regularize.pgfn.gov.br/cadastro/cnpj'
-        } else if (responseContent.includes('login') || responseContent.includes('senha')) {
+        // Check for "already registered" modal message - CRITICAL CHECK FIRST
+        if (responseContent.includes('já está cadastrado') || 
+            responseContent.includes('Efetue login') ||
+            responseContent.includes('CNPJ informado já está cadastrado') ||
+            responseContent.includes('login com senha para continuar')) {
           finalUrl = 'https://www.regularize.pgfn.gov.br'
+          method = 'modal_already_registered'
+          evidence = 'Modal "CNPJ já está cadastrado" detected in response content'
+          console.log('🔍 MODAL DETECTADO: CNPJ já está cadastrado')
+        }
+        // Check for registration form indicators (new registration)
+        else if (responseContent.includes('cpf do responsável') || 
+                 responseContent.includes('data de nascimento') || 
+                 responseContent.includes('nome da mãe') ||
+                 responseContent.includes('confirmar senha')) {
+          finalUrl = 'https://www.regularize.pgfn.gov.br/cadastro/cnpj'
+          method = 'registration_form_detected'
+          evidence = 'Registration form fields detected'
+          console.log('🔍 FORMULÁRIO DETECTADO: Campos de cadastro encontrados')
+        } 
+        // Fallback analysis
+        else {
+          console.log('🔍 FALLBACK: Analisando conteúdo genérico')
+          if (responseContent.includes('login') || responseContent.includes('senha')) {
+            finalUrl = 'https://www.regularize.pgfn.gov.br'
+          } else {
+            finalUrl = 'https://www.regularize.pgfn.gov.br/cadastro/cnpj'
+          }
         }
       }
     }
